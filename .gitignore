@@ -1,4 +1,5 @@
 *.idea
+rank/*
 .idea
 *.pyc
 *.xls
@@ -7,3 +8,6 @@ data/chengjiao-*
 fig
 .DS_store
 *.csv
+data/*
+fangjia/
+*.xlsx

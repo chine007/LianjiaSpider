@@ -18,7 +18,7 @@ def read(city):
         files.sort()
         for f in files:
             fullPath = os.path.join(root, f)
-            print(fullPath)
+            #print(fullPath)
             if f.endswith('.xls'):
                 dfs.append(pd.read_excel(fullPath, converters = {'成交价(元/平)':lambda x:float(x),
                                                                               '链家编号':str}))
@@ -29,6 +29,8 @@ def read(city):
     dfs = []
     #统一格式
     for df in dfs0:
+        if 'Unnamed: 0' in df.columns:
+            continue
         df = df.rename(columns={'单价（元/平米）':'成交价(元/平)','所属小区':'小区','建筑面积：平米':'建筑面积',
                                '浏览(次)':'浏览（次）', '关注(人)':'关注（人）', '带看(次)':'带看（次）',
                                '所属下辖区':'下辖区', '房权所属':'产权所属', '房屋朝向':'朝向','调价（次）':'调价(次)',
@@ -82,15 +84,21 @@ def read(city):
             df['成交价(元/平)'] = pd.to_numeric(df['成交价(元/平)'], errors='coerse')
         except:
             pass
-        dfs.append(df)
+        if len(df) > 0:
+            dfs.append(df)
 
     df = pd.concat(dfs)
+    print('raw count:', len(df))
     df = df.drop_duplicates(subset=['链家编号'])
+    print('count after drop duplicates', len(df))
     df = df.loc[df['成交价(元/平)']> 1000]
-    df = df.loc[~df['土地年限'].str.contains('40')]
-    df = df.loc[~df['土地年限'].str.contains('50')]
+    print('count after drop less than 1000', len(df))
+    if city not in ['重庆', 'allcq', '南京']:
+        df = df.loc[~df['土地年限'].str.contains('40')]
+        df = df.loc[~df['土地年限'].str.contains('50')]
+    print('count after drop 40, 50', len(df))
     df = df.set_index('链家编号')
-    print(len(df))
+    #print(len(df))
     return df
 
 
@@ -102,7 +110,7 @@ city = 'default'
 def get_moving_average(res, ma_length, keep_all = False):
     startDate = datetime.datetime.strptime(res.index[0],'%Y-%m-%d')
     endDate = datetime.datetime.strptime(res.index[-1],'%Y-%m-%d')
-    print(startDate, endDate)
+    #print(startDate, endDate)
     date_range=[str(x.date()) for x in pd.date_range(startDate, endDate)]
     volume_ma = []
     median_ma = []
@@ -126,7 +134,7 @@ def get_moving_average(res, ma_length, keep_all = False):
     last_index = 0
     if keep_all == False:
         for i in range(len(volume_ma)):
-            if volume_ma[i] < ma_length / 2:
+            if volume_ma[i] < ma_length / 6:
                 last_index = i
     volume_ma = volume_ma[last_index+1:]
     median_ma = median_ma[last_index+1:]
@@ -153,7 +161,7 @@ def resetXticks(ax, res):
             month_mark.add('-'.join([year,month]))
             last_index = i
             target_xticks.append(tick)
-    if len(res) - last_index < 10:
+    if len(res) - last_index < 20:
         target_xticks = target_xticks[:-1] + [xticks[-1]]
     else:
         target_xticks = target_xticks + [xticks[-1]]
@@ -161,13 +169,19 @@ def resetXticks(ax, res):
     
 def plot(res, city, title, MA, ma_length, start_date = None, force = False, keep_all = False):
     if  force == False and len(res)< 10 + ma_length:
-        return
+        return pd.DataFrame()
     if MA == True:
         res = get_moving_average(res, ma_length, keep_all)
+    if force == False and len(res) < 10:
+        return pd.DataFrame()
     if start_date is not None:
         res = res.loc[res.index >= start_date,:]
-    if force == False and len(res) < 10:
-        return 
+        if len(res) > 0 and res.index[0] > start_date:
+            date_range=[str(x.date()) for x in pd.date_range(start_date, res.index[0])]
+            date_range=[str(x.date()) for x in pd.date_range(start_date, res.index[0])]
+            padding = pd.DataFrame(columns = res.columns,index = date_range[:-1])
+            padding.volume = [0] * len(padding)
+            res = pd.concat([padding, res])
     plt.rcParams['font.sans-serif']=['SimHei']
     matplotlib.rc('font', size=18)
     matplotlib.rcParams['figure.figsize'] = [15, 15]
@@ -175,7 +189,9 @@ def plot(res, city, title, MA, ma_length, start_date = None, force = False, keep
     ax0 = plt.subplot(gs[0])
     ax0.plot(res['median_price'])
     ax0.plot(res['mean_price'])
-    ax0.legend(['median price=%.0f'%res['median_price'][-1],'mean price=%.0f'%res['mean_price'][-1]])
+    ax0.legend(['中位数=%.0f'%res['median_price'][-1],'均价=%.0f'%res['mean_price'][-1]], prop = font)
+    x1,x2,y1,y2 = ax0.axis()
+    ax0.axis((x1,x2,0,y2))
     resetXticks(ax0, res)
     plt.setp( ax0.get_xticklabels(), visible=False)
     plt.grid(True)
@@ -184,24 +200,28 @@ def plot(res, city, title, MA, ma_length, start_date = None, force = False, keep
     ax1 = plt.subplot(gs[1])
     #ax1.bar(res.index, res['volume'])
     ax1.fill_between(res.index, res['volume'])
-    ax1.legend(['volume'])
+    ax1.legend(['30日成交量'], prop = font)
     resetXticks(ax1, res)
     plt.xticks(rotation=90)
     dir_name = os.path.join('fig', city)
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
+    plt.tight_layout()
     plt.savefig(os.path.join(dir_name, title +'.png'))
     #plt.show()
     plt.close()
+    return res
 
 def plot_district(df, city, district ='朝阳', ma_length = -1, start_date = None):
-    gp = df.loc[df['下辖区']==district].groupby(['成交时间'])
+    if district == '静安':
+        gp = df.loc[df['下辖区'].isin(set(['静安','闸北']))].groupby(['成交时间'])
+    else:
+        gp = df.loc[df['下辖区']==district].groupby(['成交时间'])
     res = pd.DataFrame({'volume':gp.size(),'mean_price':gp['成交价(元/平)'].mean(),
                         'median_price':gp['成交价(元/平)'].median()})
-    res = res.iloc[:len(res) -1,:]
-    print(district)
+    res = res.iloc[:len(res),:]
     title = district
-    plot(res, city, title, MA, ma_length, start_date)
+    return plot(res, city, title, MA, ma_length, start_date)
 def plot_df(df, city, title, MA, ma_length, start_date = None, force = False):  
     gp = df.groupby(['成交时间'])['成交价(元/平)']
     res=pd.DataFrame({"volume":gp.size(),"median_price":gp.median(), "mean_price":gp.mean()})
